@@ -15,6 +15,19 @@ import { briefArg, runOk, type AgentRun } from "./runtime.ts";
 
 const KILL_GRACE_MS = 5_000; // SIGTERM → SIGKILL escalation window
 
+/**
+ * Extensions a clean-room child still loads explicitly (`-e` survives --no-extensions).
+ * FH_CHILD_EXTENSIONS: ":"-separated paths — e.g. codex-rotate, whose openai-codex-N
+ * providers otherwise do not exist inside children.
+ */
+export function childExtensionArgs(): string[] {
+	return (process.env.FH_CHILD_EXTENSIONS ?? "")
+		.split(":")
+		.map((p) => p.trim())
+		.filter((p) => p && fs.existsSync(p))
+		.flatMap((p) => ["-e", p]);
+}
+
 /** Locate the running pi binary so we can re-invoke it as a child. */
 export function piInvocation(args: string[]): { command: string; args: string[] } {
 	const script = process.argv[1]; // the entry script pi itself was launched with
@@ -62,6 +75,7 @@ export function runChild(opts: {
 		opts.sessionDir,
 		"--no-skills",
 		"--no-extensions",
+		...childExtensionArgs(),
 		"--no-context-files",
 		"--thinking",
 		opts.thinking,
@@ -214,7 +228,8 @@ export function runChild(opts: {
 			detached: process.platform !== "win32", // own process group so cancellation reaches tool/bash descendants
 			stdio: ["ignore", "pipe", "pipe"],
 			// Children still make their real model API calls — this only skips startup chores.
-			env: { ...process.env, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1" },
+			// CODEX_ROTATE_PIN: a child must answer as the account its slot names, never rotate.
+			env: { ...process.env, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", CODEX_ROTATE_PIN: "1" },
 		});
 
 		// Line-buffer stdout: events arrive one JSON object per line, possibly split across chunks.

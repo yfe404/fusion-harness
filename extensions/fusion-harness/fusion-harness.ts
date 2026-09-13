@@ -48,7 +48,7 @@ import { Container, Text, matchesKey, truncateToWidth, visibleWidth } from "@ear
 import { registerAutoValidateCommand, registerCollaborateCommand } from "./modules/cmd-build.ts";
 import { registerFusionCommand } from "./modules/cmd-fusion.ts";
 import { registerReadonlyCommands } from "./modules/cmd-readonly.ts";
-import { piInvocation, runChild } from "./modules/child-runner.ts";
+import { childExtensionArgs, piInvocation, runChild } from "./modules/child-runner.ts";
 import {
 	cloneStack,
 	loadModelStack,
@@ -308,7 +308,7 @@ export default function (pi: ExtensionAPI) {
 	let childVisibleModelsPromise: Promise<Set<string>> | undefined;
 	const childVisibleModels = async (): Promise<Set<string>> => {
 		childVisibleModelsPromise ??= (async () => {
-			const invocation = piInvocation(["--no-extensions", "--list-models"]);
+			const invocation = piInvocation(["--no-extensions", ...childExtensionArgs(), "--list-models"]);
 			const result = await pi.exec(invocation.command, invocation.args, { timeout: 30_000 });
 			if (result.code !== 0) throw new Error(`child model catalogue failed: ${result.stderr || result.stdout}`);
 			const models = new Set<string>();
