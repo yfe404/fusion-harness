@@ -152,6 +152,8 @@ Agents must never overwrite each other's work.
 
 A CWD-scoped atomic writer lease prevents separate harness processes from mutating the same checkout simultaneously. Child agents run in their own process groups so Escape, timeout, or session shutdown reaches Pi plus tool/bash descendants. Tool allowlists enforce planning safety; prompt contracts also prohibit detached background jobs.
 
+Transient provider disconnects are retried automatically during delegated task execution. `WebSocket closed` (1000/1001/1006), connection resets, socket hangups, and upstream 502/503/504 failures retry up to two times with backoff. Retries resume the child session when Pi reported a session ID, so a write task continues from its persisted state instead of replaying mutations in a fresh context. Authentication, invalid configuration, explicit aborts, and exhausted retries remain terminal failures. Retry counts are recorded in `collaborate`'s `summary.json`.
+
 ## N-way debate
 
 <p align="center">

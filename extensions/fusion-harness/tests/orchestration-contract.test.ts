@@ -69,6 +69,10 @@ describe("orchestration contracts", () => {
     expect(prompt("SYSTEM_PROMPT_COLLAB_COORDINATOR.md")).toContain("at most one write-enabled child");
     expect(prompt("SYSTEM_PROMPT_COLLAB_COORDINATOR.md")).toContain("Never launch detached/background processes");
     expect(source).toContain("await ensureSummary(artifactsDir");
+    expect(source).toContain("MAX_TRANSIENT_TASK_RETRIES = 2");
+    expect(source).toContain("WebSocket closed");
+    expect(source).toContain("retrying ${task.id}");
+    expect(source).toContain("attempts: attempts + 1");
   });
 
   test("per-row TPS is provider-response throughput, tools excluded", () => {

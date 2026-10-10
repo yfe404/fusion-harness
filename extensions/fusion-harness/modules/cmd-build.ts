@@ -64,6 +64,10 @@ export function registerCollaborateCommand(pi: ExtensionAPI, h: HarnessDeps): vo
 	// task as its own report panel. The live N-column grid streams for the whole command;
 	// the task board is a separate belowEditor sub-widget.
 	const TASKBOARD_WIDGET = `${CUSTOM_TYPE}-taskboard`;
+	const MAX_TRANSIENT_TASK_RETRIES = 2;
+	const isTransientChildFailure = (run: AgentRun): boolean =>
+		run.status === "failed" &&
+		/websocket closed (?:1000|1001|1006)|connection (?:reset|closed)|socket hang up|ECONNRESET|upstream.*(?:502|503|504)|(?:502|503|504).*upstream/i.test(runError(run));
 	pi.registerCommand("fh-collaborate", {
 		description:
 			"Every agent plans read-only, the architect merges one delegation DAG, then tasks execute as dependencies clear — parallel where possible, exactly one shared-CWD writer at a time.",
@@ -94,7 +98,7 @@ export function registerCollaborateCommand(pi: ExtensionAPI, h: HarnessDeps): vo
 			let writerLease: WriterLease | undefined;
 			let maxConcurrentWriteEnabledChildren = 0;
 			let activeWriters = 0;
-			const taskExecutions: Array<{ taskId: string; slot: string; mode: "read" | "write"; startedAt: number; endedAt: number; ok: boolean }> = [];
+			const taskExecutions: Array<{ taskId: string; slot: string; mode: "read" | "write"; startedAt: number; endedAt: number; attempts: number; ok: boolean }> = [];
 			let plan: ValidatedCollaborationPlan | undefined;
 			try {
 				// ── Phase 1: every slot PLANS the work independently, read-only ──
@@ -214,13 +218,23 @@ export function registerCollaborateCommand(pi: ExtensionAPI, h: HarnessDeps): vo
 						activeWriters++;
 						maxConcurrentWriteEnabledChildren = Math.max(maxConcurrentWriteEnabledChildren, activeWriters);
 					}
+					let attempts = 0;
 					try {
-						await runChild({ run, prompt: collabExecutePrompt(slot, prompt, task, taskHandoff(task)), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, tools: write ? FULL_TOOLS : READONLY_TOOLS, thinking: slot.thinking, ...h.slotNextSpawn(slot, run, initialSpawns.get(slot.id)!, ctx), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+						while (true) {
+							await runChild({ run, prompt: collabExecutePrompt(slot, prompt, task, taskHandoff(task)), systemPrompt: slot.systemPrompt, appendSystemPrompts: slot.appendSystemPrompts, tools: write ? FULL_TOOLS : READONLY_TOOLS, thinking: slot.thinking, ...h.slotNextSpawn(slot, run, initialSpawns.get(slot.id)!, ctx), cwd: ctx.cwd, timeoutMs: h.childTimeoutMs(), signal: stopper.signal });
+							if (!isTransientChildFailure(run) || stopper.stopped() || attempts >= MAX_TRANSIENT_TASK_RETRIES || (!run.sessionRef && write)) break;
+							attempts++;
+							taskState.set(task.id, "queued");
+							renderBoard();
+							ctx.ui.setStatus(CUSTOM_TYPE, `collaborate: retrying ${task.id} (${attempts}/${MAX_TRANSIENT_TASK_RETRIES}) after ${runError(run)}…`);
+							await new Promise(resolve => setTimeout(resolve, 1_000 * attempts));
+							taskState.set(task.id, write ? "writing" : "reading");
+						}
 					} finally {
 						if (write) activeWriters--;
 					}
 					const ok = runOk(run) && !stopper.stopped();
-					taskExecutions.push({ taskId: task.id, slot: slot.id, mode: task.mode, startedAt: taskStartedAt, endedAt: Date.now(), ok });
+					taskExecutions.push({ taskId: task.id, slot: slot.id, mode: task.mode, startedAt: taskStartedAt, endedAt: Date.now(), attempts: attempts + 1, ok });
 					const report = runOk(run) ? run.text : `FAILED: ${runError(run)}`;
 					taskReports.set(task.id, report);
 					await h.save(reportsDir, `${task.id}-${slot.id}.md`, report);
@@ -277,7 +291,7 @@ export function registerCollaborateCommand(pi: ExtensionAPI, h: HarnessDeps): vo
 				} finally {
 					activeWriters--;
 				}
-				taskExecutions.push({ taskId: "final", slot: stack.architect.id, mode: "write", startedAt: finalStartedAt, endedAt: Date.now(), ok: runOk(architectRun) && !stopper.stopped() });
+				taskExecutions.push({ taskId: "final", slot: stack.architect.id, mode: "write", startedAt: finalStartedAt, endedAt: Date.now(), attempts: 1, ok: runOk(architectRun) && !stopper.stopped() });
 				if (stopper.stopped()) {
 					h.stoppedPanel("fh-collaborate", runs, artifactsDir, startedAt, "Stopped during final architect integration.");
 					return;
